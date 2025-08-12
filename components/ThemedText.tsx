@@ -1,4 +1,4 @@
-import { StyleSheet, Text, type TextProps } from 'react-native';
+import { Platform, StyleSheet, Text, type TextProps } from 'react-native';
 
 import { useThemeColor } from '@/hooks/useThemeColor';
 
@@ -37,24 +37,29 @@ const styles = StyleSheet.create({
   default: {
     fontSize: 16,
     lineHeight: 24,
+    ...(Platform.OS === 'android' ? { fontFamily: 'sans-serif' } : {}),
   },
   defaultSemiBold: {
     fontSize: 16,
     lineHeight: 24,
     fontWeight: '600',
+    ...(Platform.OS === 'android' ? { fontFamily: 'sans-serif-medium' } : {}),
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
     lineHeight: 32,
+    ...(Platform.OS === 'android' ? { fontFamily: 'sans-serif-medium' } : {}),
   },
   subtitle: {
     fontSize: 20,
     fontWeight: 'bold',
+    ...(Platform.OS === 'android' ? { fontFamily: 'sans-serif-medium' } : {}),
   },
   link: {
     lineHeight: 30,
     fontSize: 16,
     color: '#0a7ea4',
+    ...(Platform.OS === 'android' ? { fontFamily: 'sans-serif' } : {}),
   },
 });
