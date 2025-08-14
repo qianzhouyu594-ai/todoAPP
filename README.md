@@ -1,6 +1,7 @@
 
 ## 这是一个Expo APP 👋
-（这玩意真难用，该版本现在也许只能先连手机调试，使用开发者选项，下载apk包）
+学习笔记记录在飞书文档，可随时看哦~
+https://ycn6gckbr6sv.feishu.cn/wiki/EyJzwE46KiIyHzkVse4cFc6Pnnb
 
 ## 备忘录APP
 
