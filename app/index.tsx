@@ -35,11 +35,23 @@ export default function HomeScreen() {
 
   //draftTitle是输入内容，setDraftTitle是修改输入内容的函数
   const [draftTitle, setDraftTitle] = useState('');
+
+  //editingId是当前正在编辑的代办事项的 唯一 ID，setEditingId是修改编辑的id的函数
+  //当用户点击“编辑”时，记录哪一条待办事项被选中编辑；如果为 null，表示当前没有在编辑
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  //editingText是正在编辑的代办事项的文本内容（和 draftTitle 不一样，它是已有任务的编辑内容），setEditingText是修改编辑的标题的函数
+  //编辑时填充原本的内容，用户改动后用它保存临时的修改值
   const [editingText, setEditingText] = useState('');
+
+  //reminderModalVisible是提醒设置弹窗（Modal）是否显示，setReminderModalVisible是修改提醒模态框的可见状态的函数
+  //当用户想给代办事项加提醒时，弹出一个选择时间的对话框
   const [reminderModalVisible, setReminderModalVisible] = useState(false);
   const [reminderDateText, setReminderDateText] = useState(''); // YYYY-MM-DD（北京时区）
   const [reminderTimeText, setReminderTimeText] = useState(''); // HH:mm（北京时区）
+
+  //reminderTargetId是当前正在设置提醒的代办事项的唯一 ID，setReminderTargetId是修改提醒目标的id的函数
+  //让程序知道给哪一条待办事项设置提醒
   const [reminderTargetId, setReminderTargetId] = useState<string | null>(null);
 
   // 用于 Web 端降级的 setTimeout 定时器
@@ -49,16 +61,57 @@ export default function HomeScreen() {
   //useMemo（函数，【依赖项】）
   const isAddDisabled = useMemo(() => draftTitle.trim().length === 0, [draftTitle]);
 
+  // ======= 通知初始化：前台显示 + Android 渠道 + 权限 =======
+  useEffect(() => {
+    (async () => {
+      try {
+        const Notifications = await getNotificationsModule();
+        if (!Notifications) return;
+
+        Notifications.setNotificationHandler({
+          handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+            // iOS 需要明确声明前台横幅与列表展示
+            shouldShowBanner: true,
+            shouldShowList: true,
+          }),
+        });
+
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('reminders', {
+            name: '待办提醒',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#FF231F7C',
+            enableVibrate: true,
+            enableLights: true,
+            sound: 'default',
+          });
+        }
+
+        const settings = await Notifications.getPermissionsAsync();
+        if (settings.status !== 'granted') {
+          await Notifications.requestPermissionsAsync();
+        }
+      } catch {}
+    })();
+  }, []);
+
   // ======= 持久化：存取工具 =======
   async function getAsyncStorage() {
     try {
+      //动态导入一个React Native 官方推荐的本地存储库，如果在 Web 端直接 import 它，会报错（Web 环境不存在这个模块）
       const mod = await import('@react-native-async-storage/async-storage');
+      //成功：返回 AsyncStorage 对象（mod.default）
       return mod.default;
     } catch {
       return null;
     }
   }
 
+ //跨平台读取存储的值，如果平台是web，则使用localStorage，否则使用AsyncStorage
   async function storageGetItem(key: string) {
     if (Platform.OS === 'web') {
       try {
@@ -71,6 +124,7 @@ export default function HomeScreen() {
     return AS ? await AS.getItem(key) : null;
   }
 
+ //跨平台存储数据，如果平台是web，则使用localStorage，否则使用AsyncStorage
   async function storageSetItem(key: string, value: string) {
     if (Platform.OS === 'web') {
       try {
@@ -82,15 +136,15 @@ export default function HomeScreen() {
     if (AS) await AS.setItem(key, value);
   }
 
+  //Web 端的待办事项提醒功能，负责安排单个任务的提醒
   function scheduleWebReminderOnly(todoId: string, timestamp: number, title: string) {
     const delay = Math.max(0, timestamp - Date.now());
     webTimersRef.current[todoId] = setTimeout(() => {
-      // eslint-disable-next-line no-alert
       alert(`待办提醒：${title}`);
       clearReminder(todoId);
     }, delay);
   }
-
+  //负责批量重置所有任务的提醒，比如你修改了提醒时间，或者重新加载了待办列表时
   function rescheduleWebReminders(list: TodoItem[]) {
     // 清空旧的 web 定时器
     Object.keys(webTimersRef.current).forEach((id) => {
@@ -107,12 +161,15 @@ export default function HomeScreen() {
     }
   }
 
-  // 首次加载：读取存储并恢复 Web 定时器
+  //依赖数组是 [] → 只会在组件首次挂载时执行一次
+  // 恢复上次关闭应用前保存的任务列表，并让提醒功能继续生效
   useEffect(() => {
     (async () => {
+      //从本地存储（AsyncStorage 或 localStorage）获取保存的待办数据（JSON 字符串）
       const raw = await storageGetItem(STORAGE_KEY);
       if (!raw) return;
       try {
+        //把字符串转成待办事项数组
         const parsed: TodoItem[] = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           setTodos(parsed);
@@ -122,7 +179,8 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // 变更后保存
+  // 依赖数组是 [todos] → 每当 todos 状态变化时执行（新增、修改、删除任务都会触发）。
+  //保证任务列表的最新状态被持久化，下次打开时能恢复
   useEffect(() => {
     const payload = JSON.stringify(
       todos.map(({ id, title, completed, reminderTimestamp, notificationId }) => ({
@@ -136,28 +194,36 @@ export default function HomeScreen() {
     storageSetItem(STORAGE_KEY, payload);
   }, [todos]);
 
+
+  //添加代办
   function handleAddTodo() {
     const trimmed = draftTitle.trim();
     if (trimmed.length === 0) return;
+    //用当前的时间戳作为唯一id值
     const newItem: TodoItem = { id: String(Date.now()), title: trimmed, completed: false };
+    //用 setTodos 把新任务插到数组开头（[newItem, ...prev]）
     setTodos((prev) => [newItem, ...prev]);
+    //清空输入框内容 
     setDraftTitle('');
   }
-
+//删除代办
   function handleDeleteTodo(id: string) {
+    //如果该任务有提醒定时器，就先取消
     clearReminder(id);
+    //用 filter 过滤掉要删除的任务
     setTodos((prev) => prev.filter((t) => t.id !== id));
   }
-
+//编辑代办是否完成
   function toggleComplete(id: string) {
+    //如果 t.id 和传入的 id 相等，就返回一个新对象，把 completed 取反
     setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t)));
   }
-
+//编辑代办文字内容
   function startEdit(id: string, current: string) {
     setEditingId(id);
     setEditingText(current);
   }
-
+//保存新编辑的代办文字内容
   function saveEdit() {
     if (!editingId) return;
     const trimmed = editingText.trim();
@@ -166,50 +232,53 @@ export default function HomeScreen() {
       setEditingText('');
       return;
     }
+    // 遍历 todos，找到 id === editingId 的那一项，更新它的 title
     setTodos((prev) => prev.map((t) => (t.id === editingId ? { ...t, title: trimmed } : t)));
     setEditingId(null);
     setEditingText('');
   }
-
+//取消编辑
   function cancelEdit() {
     setEditingId(null);
     setEditingText('');
   }
-
+//全部完成
   function completeAll() {
     setTodos((prev) => prev.map((t) => ({ ...t, completed: true })));
   }
-
+//全部删除
   function deleteAll() {
+    //web端删除
     if (Platform.OS === 'web') {
-      // eslint-disable-next-line no-restricted-globals
       const ok = confirm('确定要删除全部代办吗？');
       if (!ok) return;
       setTodos([]);
       return;
     }
+    //原生端删除
     Alert.alert('清空代办', '确定要删除全部代办吗？', [
       { text: '取消', style: 'cancel' },
       { text: '删除', style: 'destructive', onPress: () => setTodos([]) },
     ]);
   }
-
+//清除已完成
   function clearCompleted() {
     setTodos((prev) => {
+      //遍历 todos，找出 completed === true 的任务，先对它们执行 clearReminder(t.id)（取消提醒）
       prev.filter((t) => t.completed).forEach((t) => clearReminder(t.id));
       return prev.filter((t) => !t.completed);
     });
   }
-
+//统计代办总数、已完成数、未完成数、完成百分比
   const total = todos.length;
   const completedCount = useMemo(() => todos.filter((t) => t.completed).length, [todos]);
   const pendingCount = total - completedCount;
   const percent = total === 0 ? 0 : Math.round((completedCount / total) * 100);
 
+//删除单个代办
   function confirmDelete(id: string) {
     if (Platform.OS === 'web') {
       // Web 端使用原生 confirm，RNW 的 Alert 不支持多按钮回调
-      // eslint-disable-next-line no-restricted-globals
       const ok = confirm('确定要删除这条代办吗？');
       if (ok) handleDeleteTodo(id);
       return;
@@ -220,7 +289,8 @@ export default function HomeScreen() {
     ]);
   }
 
-  // ======= 提醒相关：调度 & 取消 =======
+  // 设置闹钟提醒相关
+  //动态引入一个模块expo-notifications
   async function getNotificationsModule() {
     try {
       const mod = await import('expo-notifications');
@@ -229,7 +299,7 @@ export default function HomeScreen() {
       return null;
     }
   }
-
+//确保 App 拥有通知权限，没有的话会向用户申请
   async function ensurePermission() {
     const Notifications = await getNotificationsModule();
     if (!Notifications) return false;
@@ -240,27 +310,36 @@ export default function HomeScreen() {
     }
     return true;
   }
-
+// 调度提醒通知
   async function scheduleReminder(todoId: string, date: Date) {
     // 先清理旧提醒
     clearReminder(todoId);
 
     const Notifications = await getNotificationsModule();
+    //原生端
     if (Notifications && Platform.OS !== 'web') {
       const ok = await ensurePermission();
       if (!ok) {
         Alert.alert('通知权限未开启', '请在系统设置中允许通知权限');
         return;
       }
+      // 创建按秒计的触发器，规避类型分歧（TimeIntervalTriggerInput）
+      const delaySec = Math.max(1, Math.ceil((date.getTime() - Date.now()) / 1000));
+      // 默认使用绝对时间，避免部分设备秒级触发异常
+      const trigger: any = Platform.OS === 'android'
+        ? { date, channelId: 'reminders', allowWhileIdle: true }
+        : date;
       const id = await Notifications.scheduleNotificationAsync({
         content: {
           title: '待办提醒',
           body: todos.find((t) => t.id === todoId)?.title ?? '有一条待办需要处理',
           sound: true,
         },
-        trigger: date,
+        // 触发器按 any 处理，规避不同平台/版本类型差异
+        trigger,
       });
       setTodos((prev) => prev.map((t) => (
+        //在对应的代办对象里记录提醒时间（reminderTimestamp）和通知 ID（notificationId），方便以后取消或修改提醒
         t.id === todoId ? { ...t, reminderTimestamp: date.getTime(), notificationId: id } : t
       )));
       return;
@@ -279,13 +358,15 @@ export default function HomeScreen() {
     )));
   }
 
+//取消闹钟提醒
   async function clearReminder(todoId: string) {
-    // 取消本地通知
     const todo = todos.find((t) => t.id === todoId);
+    //todo.notificationId 存在 → 表示之前给这条代办设置过系统通知（移动端）
     if (todo?.notificationId) {
       const Notifications = await getNotificationsModule();
       if (Notifications) {
         try {
+          //调用 cancelScheduledNotificationAsync 来取消已经计划好的系统通知
           await Notifications.cancelScheduledNotificationAsync(todo.notificationId);
         } catch {}
       }
@@ -317,6 +398,15 @@ export default function HomeScreen() {
   function formatBeijing(ts: number) {
     const p = getBeijingParts(ts);
     return `${p.year}-${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}`;
+  }
+
+  // 当天仅显示时:分；跨天显示 月-日 时:分（北京时间）
+  function formatBeijingShort(ts: number) {
+    const now = getBeijingParts();
+    const p = getBeijingParts(ts);
+    const sameDay = now.year === p.year && now.month === p.month && now.day === p.day;
+    if (sameDay) return `${pad2(p.hour)}:${pad2(p.minute)}`;
+    return `${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}`;
   }
 
   function makeDateFromBeijingParts(y: number, m: number, d: number, hh: number, mm: number) {
@@ -427,15 +517,20 @@ export default function HomeScreen() {
           <FlatList
             data={todos}
             keyExtractor={(item) => item.id}
+            // 当列表为空时，用 emptyListContainer 样式让提示居中
             contentContainerStyle={todos.length === 0 && styles.emptyListContainer}
             ListEmptyComponent={<Text style={styles.emptyTip}>还没有代办，先添加一条吧～</Text>}
             renderItem={({ item }) => (
+              //动画效果
               <Animated.View
+              // 新列表项出现时的动画效果，这里是下滑淡入
                 entering={FadeInDown.springify().damping(16)}
+                //删除列表项时的动画效果，这里是上滑淡出
                 exiting={FadeOutUp}
                 layout={Layout.springify()}
                 style={styles.todoRow}
               >
+                {/* 完成状态按钮（切换完成 大拇指/ 未完成 圆圈） */}
                 <Pressable onPress={() => toggleComplete(item.id)} style={styles.iconButton}>
                   {item.completed ? (
                     <FontAwesome name="thumbs-up" size={20} color="#34C759" />
@@ -444,6 +539,7 @@ export default function HomeScreen() {
                   )}
                 </Pressable>
 
+                {/* 代办标题（可编辑状态）用三元运算符判断 */}
                 {editingId === item.id ? (
                   <TextInput
                     value={editingText}
@@ -459,6 +555,7 @@ export default function HomeScreen() {
                   </Text>
                 )}
 
+                {/* 操作按钮组 编辑状态和普通状态不同，也用三元运算符判断*/}
                 {editingId === item.id ? (
                   <View style={styles.rowGap8}>
                     <Pressable onPress={saveEdit} style={styles.iconButton}>
@@ -498,11 +595,11 @@ export default function HomeScreen() {
                     ) : null}
                   </View>
                 )}
-                {/* 提醒时间标签（北京时间） */}
+                {/* 第二行：提醒时间标签（北京时间） */}
                 {item.reminderTimestamp ? (
-                  <Text style={{ fontSize: 12, color: '#6b7280' }}>
-                    ⏰ {formatBeijing(item.reminderTimestamp)} (北京时间)
-                  </Text>
+                  <View style={styles.secondLine}>
+                    <Text style={styles.reminderTag}>⏰ {formatBeijingShort(item.reminderTimestamp)}（北京）</Text>
+                  </View>
                 ) : null}
               </Animated.View>
             )}
@@ -517,6 +614,7 @@ export default function HomeScreen() {
       animationType="fade"
       onRequestClose={() => setReminderModalVisible(false)}
     >
+      {/* 用一个全屏 Pressable 做遮罩 */}
       <Pressable style={styles.modalBackdrop} onPress={() => setReminderModalVisible(false)}>
         <Pressable style={styles.modalCard} onPress={() => {}}>
           <Text style={styles.modalTitle}>设置闹钟（北京时间）</Text>
@@ -693,6 +791,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: '#fafafa',
     gap: 10,
+  },
+  secondLine: {
+    flexBasis: '100%',
+    marginTop: 6,
+  },
+  reminderTag: {
+    fontSize: 12,
+    color: '#6b7280',
   },
   iconButton: {
     padding: 6,
