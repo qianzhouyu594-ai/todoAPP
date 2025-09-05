@@ -19,7 +19,7 @@ https://ycn6gckbr6sv.feishu.cn/wiki/EyJzwE46KiIyHzkVse4cFc6Pnnb
 <br/>
 （1）手机下载Expo，然后扫码就可以连手机（这太理论了，我就没有扫成功过码）
 <br/>
-（2）web端打开http://localhost:8081
+（2）web端打开
 <br/>
 一般来说是这个地址，然后用谷歌调试工具换成移动端设备就可以先勉强看看了
 
